@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="WebServers">
+    <option name="servers">
+      <webServer id="c69c49ae-05f8-40e4-84fc-b5984d682b65" name="zx" url="http://106.14.7.29">
+        <fileTransfer host="106.14.7.29" port="22" accessType="SFTP">
+          <advancedOptions>
+            <advancedOptions dataProtectionLevel="Private" />
+          </advancedOptions>
+          <option name="port" value="22" />
+        </fileTransfer>
+      </webServer>
+      <webServer id="21818c89-3ca2-41a8-8827-fe2a322ea429" name="ftp" url="http://106.14.7.29">
+        <fileTransfer host="106.14.7.29" port="21">
+          <advancedOptions>
+            <advancedOptions dataProtectionLevel="Private" />
+          </advancedOptions>
+          <option name="port" value="21" />
+        </fileTransfer>
+      </webServer>
+    </option>
+  </component>
+</project>
