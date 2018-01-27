@@ -178,17 +178,9 @@
     2. 读更少的数据,例如不读取无关数据等
     3. 无需关注优化   
 
-### 从Hive过度到Spark SQL
-* SQLContext/HiveContext/SparkContext的使用
-    * SQLContext/HiveContext是Spark1.x中的类.已经废弃,只做了解
 
-#### SQLContext(可以在1.6老版本的文档中查看)
-* Spark1.x中SparkSQL的入口点:SQLContext
->
-    val sc: SparkContext // 一个存在的SparkContext
-    val sqlContext = new org.apache.spark.sql.SQLContext(sc)
->
-
+    
+#### IDEA 构建Scala项目
 * 使用IDEA创建maven项目,选择骨架为scala-archetype-simple
     >
         只需如下依赖,并修改其版本(可删除其他关于插件/仓库等所有无关信息.)
@@ -244,6 +236,17 @@
           }
         }
     >
+    
+### 从Hive过度到Spark SQL
+* SQLContext/HiveContext/SparkContext的使用
+    * SQLContext/HiveContext是Spark1.x中的类.已经废弃,只做了解
+
+#### SQLContext(可以在1.6老版本的文档中查看)
+* Spark1.x中SparkSQL的入口点:SQLContext
+>
+    val sc: SparkContext // 一个存在的SparkContext
+    val sqlContext = new org.apache.spark.sql.SQLContext(sc)
+>
     
 * 编写SQLContext的scala类
 >
@@ -483,4 +486,28 @@
       }
     }
 >
-    
+
+#### DataFrame & Dataset & RDD
+* RDD -> DataFrame -> Dataset
+
+* RDD: 一个分布式的无序的列表
+* Dateset: 一个分布式的数据集合.
+* DataFrame: 以列（列名、列的类型、列值）的形式构成的分布式数据集(Dataset)，按照列赋予不同的名称.(不是Spark SQL提出，而是在R、Pandas语言就已有。)
+    * 可以直接将其等价理解为一张表.
+    * 数据可以从 结构化数据文件/Hive中的表/其他外部数据源/或者RDD转换过来.也有查询/过滤/聚合等操作.
+    * Spark1.3之前,它被称为SchemaRDD.
+* Dataset可以理解为DataFrame的一个特列.主要区别在于Dataset的每个record存储的是一个强类型值,而不是一个row.
+
+* DataFrame和RDD的区别
+![](img/1.png)
+    >
+        RDD：各个语言运行在自己的环境中 
+        	java/scala  ==> jvm
+        	python ==> python runtime
+        DataFrame: 所有计算被转换为逻辑执行计划,性能相同
+        	java/scala/python ==> Logic Plan
+        	
+        	
+       RDD,例如以Person为类型的RDD,Spark框架本身不了解其内部结构,需要用户写一个特定的聚合函数来完成对应功能,
+       而DataFrame却提供了详细的信息(schema),可以更好的进行优化.
+    >
