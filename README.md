@@ -17,6 +17,14 @@
 * mvn -X,查看到更详细的错误信息
 * jps -m 查看更详细的信息
 
+* 代码中的sparkSession最好取名为spark,因为运行spark-shell后,默认的sparkSession名,即为spark.如果同名,代码可以直接拷贝到spark-shell测试运行
+* 当使用linux系统中的path时,需要增加前缀file://, windows则不能添加
+
+* 从数据随机抽取0.1的数据
+> spark.read.format("json").option("samplingRatio","0.1").load("/xxx")
+
+
+
 #### bug-部分执行时遇到的问题写在了笔记中
 * linux中tar命令提示错误,可能是下载时,下载的链接不是最终连接,例如点进去还有一个目录,但你wget了前一个目录.
 
@@ -487,6 +495,9 @@
     }
 >
 
+
+
+
 #### DataFrame & Dataset & RDD
 * RDD -> DataFrame -> Dataset
 
@@ -511,3 +522,302 @@
        RDD,例如以Person为类型的RDD,Spark框架本身不了解其内部结构,需要用户写一个特定的聚合函数来完成对应功能,
        而DataFrame却提供了详细的信息(schema),可以更好的进行优化.
     >
+
+#### DataFrame API 
+* 基本api操作
+    >
+            //创建SparkSession
+            val sparkSession = SparkSession.builder().appName("DataFrameApp").master("local[2]").getOrCreate()
+            //将json文件加载为DataFrame
+            val testDataFrame = sparkSession.read.format("json").load("C:\\Users\\97038\\Desktop\\people.json")
+            //打印出DataFrame的Schema(类似表信息)信息
+            testDataFrame.printSchema()
+            //输出文件内容(默认是前20条)
+            testDataFrame.show()
+        
+            //查询某列所有的数据: select name from table
+            testDataFrame.select("name").show()
+            //除了传入列名字符串,还可以传入Column对象, 通过DataFrame的col()方法返回Column对象
+            //并显示出+10后的age字段  : select name. age + 10 from table
+            //并且可以给计算后显示的列名起别名(如果不起,列名是  age + 10 )
+            testDataFrame.select(testDataFrame.col("name"),(testDataFrame.col("age") + 10).as("age2")).show()
+        
+            //根据某一列的值进行过滤 : select * from table where age > 19(他也有DataFrame.where()方法)
+            testDataFrame.filter(testDataFrame.col("age") > 19).show()
+        
+            //根据某一列进行分组,再进行聚合操作 : select age,count(1) from table group by age (也就是计算每个年龄有多少人)
+            testDataFrame.groupBy("age").count().show()
+        
+            sparkSession.stop()
+    >
+
+#### DataFrame 和 RDD 相互转换和操作
+* 反射方式(需要了解DtaFrame的schema信息,也就是下方定义的Info对象)
+    * 假设有如下info.txt文件
+        >
+            1,zhangshan,20
+            2,lisi,30
+            3,wangwu ,40
+        >
+    * 代码
+        >
+            /**
+              * 通过反射将 RDD 转换为 DataFrame
+              */
+              private def convertByReflection(sparkSession: SparkSession): Unit = {
+                //RDD ==> DataFrame
+                //使用sparkContext将文件读取为RDD[String]
+                val rdd = sparkSession.sparkContext.textFile("C:\\Users\\97038\\Desktop\\info.txt")
+            
+                //将rdd(分为若干行,每一行的记录用逗号分隔), 每一行都用逗号分隔(这样相当于每一行都被分割为三个字段),
+                //然后再将这三个字段拼接为Info对象.
+                //然后再将这个RDD转换为DataFrame(需要导入sparkSession.implicits._   (隐式转换))
+                import sparkSession.implicits._
+                val infoDF = rdd.map(row => row.split(","))
+                  .map(field => Info(field(0).toInt, field(1), field(2).toInt))
+                  .toDF()
+                infoDF.show()
+            
+                //后续可以继续操作该DataFrame
+                infoDF.filter(infoDF.col("age") > 30).show()
+            
+                //将其转换为临时表,然后可以直接用spark sql 处理
+                infoDF.createOrReplaceTempView("infoTable")
+                sparkSession.sql("select * from infoTable where age > 30").show()
+              }
+            
+              //一个java bean,表示文件的schema
+              case class Info(id: Int, name: String, age: Int)
+        >
+* 编程方式(代码冗长,适用于事先不知道RDD schema信息,只有运行时才知道(也就是无法提前定义上面的case class Info对象)) 
+    >
+          /**
+            * 通过编程将 RDD 转换为 DataFrame
+            */
+          private def convertByProgram(sparkSession: SparkSession): Unit = {
+            //RDD ==> DataFrame
+            //使用sparkContext将文件读取为RDD[String]
+            val rdd = sparkSession.sparkContext.textFile("C:\\Users\\97038\\Desktop\\info.txt")
+        
+            //将每一行转换为一个Row对象,获取到一个RDD对象
+            val infoRDD = rdd.map(row => row.split(",")).map(field => Row(field(0).toInt, field(1), field(2).toInt))
+        
+            //定义结构类型,需要传入一个数组,该数组每个元素是一个字段,每个字段需要传入 字段名/字段类型/是否能为空
+            val structType = StructType(Array(
+              StructField("id", IntegerType, true),
+              StructField("name", StringType, true),
+              StructField("age", IntegerType, true)))
+        
+            //通过 RDD对象和其对应的StructType对象 创建出 DataFrame
+            val infoDF = sparkSession.createDataFrame(infoRDD, structType)
+            infoDF.show()
+          }
+    >
+
+#### DataFrame 操作案例
+* 使用|分割字段的,学生数据
+* 代码
+    >
+          def main(args: Array[String]): Unit = {
+            //创建SparkSession
+            val sparkSession = SparkSession.builder().appName("DataFrameCase").master("local[1]").getOrCreate()
+            //读取出rdd类型对象
+            val rdd = sparkSession.sparkContext.textFile("C:\\Users\\97038\\Desktop\\student.data")
+        
+            /**
+              * 转为DataFrame
+              * 我之所以输出了每次map的中间值,是因为遇到一个 空字符串无法toInt的bug.
+              * 最后发现是我的student.data文件底下有几个空行,导致的.这个bug...把我自己的逗笑了..难受..
+              */
+            import sparkSession.implicits._
+            val studentDF = rdd
+              .map(row => {
+        //        println(row)
+                row.split("\\|")})
+              .map(field => {
+        //        println(field(0))
+                Student(field(0).toInt,field(1),field(2),field(3))
+              }).toDF()
+        
+            //显示.指定条数,默认20, 第二个boolean参数表示是否截去超出长度20的字符(显示为xxx...)
+            studentDF.show(30,false)
+            //获取(注意是获取)前10行,并循环打印(内部是调用head()方法)
+            studentDF.take(10).foreach(println(_))
+            //第一行记录(内部是调用head()方法)
+            println(studentDF.first())
+            //获取前10行记录
+            studentDF.head(10).foreach(println(_))
+        
+            //过滤出名字为空字符或者null字符的
+            studentDF.filter("name='' OR name='NULL'").show()
+        
+            //过滤出名字以O开头的
+            studentDF.filter("SUBSTRING(name,0,1)='O'").show()
+        
+            //可通过如下sql查询出所有内置函数, (其第一位应该为符号位,如果直接用Integer.MAX_VALUE,会提示超出最小值)
+        //    sparkSession.sql("show functions").show(Integer.MAX_VALUE-1)
+        
+            //排序(studentDF("name") 等价于 studentDF.col("name"))
+            studentDF.sort(studentDF("name").desc).show()
+            //按照名字升序,如果名字相同,则按照id降序排序
+            studentDF.sort(studentDF("name").asc,studentDF("id").desc).show()
+        
+        
+            //再创建一个相同的DataFrame
+            val studentDF2 = rdd
+              .map(row => {
+                //        println(row)
+                row.split("\\|")})
+              .map(field => {
+                //        println(field(0))
+                Student(field(0).toInt,field(1),field(2),field(3))
+              }).toDF()
+        
+            //join查询操作. 第一个参数为要join的Dataset(DataFrame属于Dataset).第二个参数为join的表达式, 注意需要使用===,默认是inner join
+            studentDF.join(studentDF2, studentDF("id") === studentDF2("id")).show()
+        
+            sparkSession.stop()
+          }
+        
+          //定义bean
+          case class Student(id: Int,name: String, phone: String, email: String)
+    >   
+
+#### Dataset
+* 它保证了运行时的类型安全,解析或语法错误都是在编译时就会报错的.而不像sql或者dataFrame,在运行时才报错.(例如sql将select写错,或dataframe将字段名写错)
+* 代码
+    >
+          def main(args: Array[String]): Unit = {
+            val sparkSession = SparkSession.builder().appName("DatasetApp")
+              .master("local[2]").getOrCreate()
+        
+            //需要导入隐式转换
+            import sparkSession.implicits._
+        
+            //spark如何解析csv
+            val df = sparkSession.read
+              .option("header", "true") //解析头信息(也就是将第一行作为字段信息)
+              .option("inferSchema", "true") //推断schema信息
+                .csv("C:\\Users\\97038\\Desktop\\test.csv")
+            df.show()
+            //将DataFrame 转化为 Dataset
+            val dataset = df.as[Test]
+            //输出cid
+            dataset.map(line => line.cid).show()
+        
+          }
+        
+          case class Test(id: Int, aid: Int, bid: Int, cid: Double)
+    >
+
+#### 外部数据源 External Data Source API
+* 可以从不同数据源(json/parquet(一种列式存储结果)/rdbms(关系型数据库)),经过混合处理(例如json join parquet),再将处理结果以特定格式写回到存储中去.
+
+* 开发外部数据源,只需要自己写好对应扩展类,然后运行时指定这些类的jars即可
+* 使用时:
+    >
+        	读：spark.read.format(format)  
+        		format 支持的格式
+        			build-in(内置): json parquet jdbc  csv(2+)
+        			packages: 外部的 并不是spark内置 ,可查看  https://spark-packages.org/ 选择别人的外置数据源(jars)
+        	写：people.write.format("parquet").save("path")	
+    >
+
+* 操作Parquet文件数据(在spark_home/examples/sr/main/sources/users.parquet,有测试数据)
+    * spark-shell --master local[2] --jars /zx/hive/lib/mysql-connector-java-5.1.36.jar
+    * spark-sql --master local[2] --jars /zx/hive/lib/mysql-connector-java-5.1.36.jar
+    * 可以启动spark-shell,依次执行如下语句(因为该测试数据是乱码,我查看了其本身编码为一个很偏门的编码,idea和记事本都找不到该编码,就直接在linux中测试)
+        >
+                //(这句无需执行)创建SparkSession
+                val spark = SparkSession.builder().appName("ParquetApp").master("local[2]").getOrCreate()
+                
+                //将parquet文件加载为DataFrame,如果不写format()方法,默认处理的格式为parquet
+                val userDF = spark.read.format("parquet").load("file:///zx/spark-2.2.1-bin-hadoop2.7/examples/src/main/resources/users.parquet")
+                userDF.printSchema()
+                userDF.show()
+                //只取其中的两个字段,保存为json文件,注意(这个save()方法指定的是一个目录,会将一些信息生成若干个文件都保存到该目录中)
+                userDF.select("name","favorite_numbers").write.format("json").save("file:///jsonout")
+                spark.stop()
+        >
+    * 也可以运行spark-sql(注意要用using指定数据格式),依次执行下面两句话
+        >
+            CREATE TEMPORARY VIEW parquetTable
+            USING org.apache.spark.sql.parquet
+            OPTIONS (
+              path "/zx/spark-2.2.1-bin-hadoop2.7/examples/src/main/resources/users.parquet"
+            )
+            
+            SELECT * FROM parquetTable
+        >
+
+* 操作Hive表的数据
+    >
+        //读取
+        spark.table(tableName)
+        //保存
+        dataFrame.write.saveAsTable(tableName)
+        即可
+        可以通过如下语句设置如下参数,默认是200,是分区数量
+        spark.sqlContext.setConf("spark.sql.shuffle.partitions","10")
+    >
+    
+* 操作Mysql表数据
+    * 指定连接url的时候可以不指定数据库名,通过在表名中执行 xxx.tableName指定
+    * 方式一
+        >
+            val jdbcDF = spark.read.format("jdbc").option("url", "jdbc:mysql://localhost:3306/hive").option("dbtable", "hive.TBLS").option("user", "root").option("password", "123456").option("driver", "com.mysql.jdbc.Driver").load()
+            jdbcDF.printSchema()
+            jdbcDF.show()
+            
+            
+            jdbcDF.write.format("jdbc")
+                 .option("url", "jdbc:mysql://localhost:3306/hive").option("dbtable", "hive.TBLS").option("user", "root").option("password", "123456").option("driver", "com.mysql.jdbc.Driver").save()
+            
+        >
+    * 方式二
+        >
+            import java.util.Properties
+            val connectionProperties = new Properties()
+            connectionProperties.put("user", "root")
+            connectionProperties.put("password", "123456")
+            connectionProperties.put("driver", "com.mysql.jdbc.Driver")
+            val jdbcDF2 = spark.read.jdbc("jdbc:mysql://localhost:3306", "hive.TBLS", connectionProperties)
+            
+            
+            jdbcDF2.write.jdbc("jdbc:mysql://localhost:3306", "hive.TBLS", connectionProperties)
+        >
+    * 使用spark-sql   
+        >
+            CREATE TEMPORARY VIEW jdbcTable
+            USING org.apache.spark.sql.jdbc
+            OPTIONS (
+              url "jdbc:mysql://localhost:3306",
+              dbtable "hive.TBLS",
+              user 'root',
+              password '123456',
+              driver 'com.mysql.jdbc.Driver'
+            )
+        >
+
+* 综合使用- 将mysql和hive中的表进行关联查询
+    * 将两个要join的表都加载为dataFrame对象,然后进行后续操作即可
+    >
+            //创建SparkSession
+            val spark = SparkSession.builder().appName("HiveMySqlApp").master("local[2]").getOrCreate()
+            //加载hive表数据
+            val hiveDF = spark.table("temp")
+            //加载mysql表的数据
+            val jdbcDF = spark.read.format("jdbc").option("url", "jdbc:mysql://localhost:3306/hive").option("dbtable", "hive.TBLS").option("user", "root").option("password", "123456").option("driver", "com.mysql.jdbc.Driver").load()
+        
+            //join操作
+            val resultDF =  hiveDF.join(jdbcDF, hiveDF("xx") === jdbcDF("xxx"))
+            resultDF.show()
+            //然后可以继续写查询代码
+        //    resultDF.select(xxxxxxxx)
+        
+            spark.stop()
+    >
+    
+#### Spark SQL的愿景
+* 更少的代码量
+* 使用了统一的接口(例如从json/parquet等读取写入数据都使用了统一的接口)

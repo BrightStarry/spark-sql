@@ -1,7 +1,6 @@
-package com.zx.spark
+package com.zx.spark.context
 
-import org.apache.spark.{SparkConf, SparkContext}
-import org.apache.spark.sql.{SQLContext, SparkSession}
+import org.apache.spark.sql.SparkSession
 
 /**
   * author:ZhengXing
@@ -17,8 +16,10 @@ object SparkSessionApp {
       .master("local[2]")
       .appName("SparkSessionApp")
       .getOrCreate()
-    //2.读取json
+    //2.读取json,返回值就是一个DataFrame
     val people = sparkSession.read.json(path)
+    //或者如下写法,json()方法,不过是封装了下format("josn").load()这个语句
+//    val people = sparkSession.read.format("josn").load()
     //显示json
     people.show()
     //关闭

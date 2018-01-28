@@ -1,14 +1,14 @@
-package com.zx.spark
+package com.zx.spark.context
 
-import org.apache.spark.{SparkConf, SparkContext}
 import org.apache.spark.sql.SQLContext
+import org.apache.spark.{SparkConf, SparkContext}
 
 /**
   * author:ZhengXing
   * datetime:2018-01-20 14:43
   * sqlContext的使用
   */
-object SQLContextAPP {
+object SQLContextApp {
 
   def main(args: Array[String]): Unit = {
     //将运行时传入的第一个参数作为json文件的路径
