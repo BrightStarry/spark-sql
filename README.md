@@ -502,6 +502,7 @@
 * RDD -> DataFrame -> Dataset
 
 * RDD: 一个分布式的无序的列表
+    * 它的数据被分为若干分片,分布在整个spark集群中
 * Dateset: 一个分布式的数据集合.
 * DataFrame: 以列（列名、列的类型、列值）的形式构成的分布式数据集(Dataset)，按照列赋予不同的名称.(不是Spark SQL提出，而是在R、Pandas语言就已有。)
     * 可以直接将其等价理解为一张表.
@@ -821,3 +822,68 @@
 #### Spark SQL的愿景
 * 更少的代码量
 * 使用了统一的接口(例如从json/parquet等读取写入数据都使用了统一的接口)
+
+
+#### 用户行为日志分析
+用户行为日志：用户每次访问网站时所有的行为数据（访问、浏览、搜索、点击...）  
+用户行为轨迹、流量日志  
+
+
+日志数据内容：  
+1）访问的系统属性： 操作系统、浏览器等等  
+2）访问特征：点击的url、从哪个url跳转过来的(referer)、页面上的停留时间等  
+3）访问信息：session_id、访问ip(访问城市)等  
+
+
+* 数据处理流程
+1）数据采集(beats之类的都是可以的)
+	Flume： web日志写入到HDFS
+
+2）数据清洗
+	脏数据
+	Spark、Hive、MapReduce 或者是其他的一些分布式计算框架  
+	清洗完之后的数据可以存放在HDFS(Hive/Spark SQL)
+
+3）数据处理
+	按照我们的需要进行相应业务的统计和分析
+	Spark、Hive、MapReduce 或者是其他的一些分布式计算框架
+
+4）处理结果入库
+	结果可以存放到RDBMS(关系型数据库)、NoSQL
+
+5）数据的可视化(还有阿里的一个收费的产品.页面贼科幻)
+	通过图形化展示的方式展现出来：饼图、柱状图、地图、折线图
+	ECharts、HUE、Zeppelin
+	
+* 离线数据处理架构
+![](img/2.png)
+
+
+
+#### 日志清洗
+* 读取日志文件,解析出每行的ip/日期/流量/url等
+    >
+         def main(args: Array[String]): Unit = {
+            val spark = SparkSession.builder().appName("StatFormatJob").master("local[2]").getOrCreate()
+            //读取文件,为rdd
+            val access = spark.sparkContext.textFile("C:\\Users\\97038\\Desktop\\10000_access.log")
+            //读取文件为Dataset.如果这样做,还需要对齐编码.但此处我们不定义其schema
+        //    val access = spark.read.textFile("C:\\Users\\97038\\Desktop\\10000_access.log")
+            //展示前10条
+        //    access.take(10).foreach(println)
+            //分割每日志,解析出需要的字段,然后保存为文件
+            access.map(line => {
+              val splits = line.split(" ")
+              val ip = splits(0)
+              //原始日志的第三个字段和第四个字段拼接起来就是完整的时间: [10/Nov/2016:00:01:02 +0800]
+              val time = DateUtil.parse(splits(3) + " " + splits(4))
+              //获取url,并去除两侧多余的引号
+              val url = splits(11).substring(1,splits(11).length-1)
+              //流量
+              val traffic = splits(9)
+              time + "\t" + url + "\t" + traffic + "\t" + ip
+            }).saveAsTextFile("C:\\Users\\97038\\Desktop\\out.log")
+        
+            spark.stop()
+          }
+    >
