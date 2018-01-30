@@ -31,7 +31,7 @@ object StatFormatJob {
       //流量
       val traffic = splits(9)
       time + "\t" + url + "\t" + traffic + "\t" + ip
-    }).saveAsTextFile("C:\\Users\\97038\\Desktop\\out.log")
+    }).saveAsTextFile("C:\\Users\\97038\\Desktop\\out")
 
     spark.stop()
   }

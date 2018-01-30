@@ -1,4 +1,6 @@
 #### Spark
+* 阅读官方文档笔记,见ReadDoc.md
+
 * 分布式的基于内存的列式存储计算框架
 * MapReduce局限性
     1. 代码繁琐
@@ -22,6 +24,19 @@
 
 * 从数据随机抽取0.1的数据
 > spark.read.format("json").option("samplingRatio","0.1").load("/xxx")
+
+* maven打成jar后,提示获取不到资源文件.
+    >
+        如下写法不可取
+        XXX.calss.getResource(path)
+        XXX.calss.getClassLoader().getResource(path)
+        
+        需要这样写
+        XXX.class.getResourceAsStream(path)
+        XXX.calss.getClassLoader().getResourceAsStream(path)
+        
+        直接操作流
+    >
 
 
 
@@ -590,7 +605,7 @@
               //一个java bean,表示文件的schema
               case class Info(id: Int, name: String, age: Int)
         >
-* 编程方式(代码冗长,适用于事先不知道RDD schema信息,只有运行时才知道(也就是无法提前定义上面的case class Info对象)) 
+* 编程方式(代码冗长,适用于事先不知道RDD schema信息,只有运行时才知道(也就是无法提前定义上面的case class Info对象,例如日志清洗后,输出不同格式的每行日志,许多字段是中间产生的,无法提前定义)) 
     >
           /**
             * 通过编程将 RDD 转换为 DataFrame
@@ -860,7 +875,7 @@
 
 
 
-#### 日志清洗
+#### 日志清洗 - 
 * 读取日志文件,解析出每行的ip/日期/流量/url等
     >
          def main(args: Array[String]): Unit = {
@@ -886,4 +901,116 @@
         
             spark.stop()
           }
+    >
+
+* 日志解析
+    * 输入：访问时间、访问URL、耗费的流量、访问IP地址信息
+    * 输出：URL、类型(课程/手记)、cmsId(编号)、流量、ip、城市信息、访问时间、天
+    * 代码
+        >
+            /**
+              * author:ZhengXing
+              * datetime:2018-01-30 20:03
+              * 访问日志转换工具类
+              * 输入 == > 输出
+              */
+            object AccessConvertUtil {
+              //定义输出字段
+              val struct = StructType(
+                Array(
+                  StructField("url",StringType),//url
+                  StructField("cmsType",StringType),//是视频还是手记
+                  StructField("cmsId",LongType),//视频或手记ip
+                  StructField("traffic",LongType),//流量
+                  StructField("ip",StringType),//ip
+                  StructField("city",StringType),//城市
+                  StructField("time",StringType),//时间
+                  StructField("day",StringType)//分区字段,根据天分区
+                )
+              )
+            
+              /**
+                * 将每行输入的log转换为输出的格式
+                */
+              def parseLog(log: String): Row = {
+                try {
+                  val arr = log.split("\t")
+            
+                  val url = arr(1)
+                  val traffic = arr(2).toLong
+                  val ip = arr(3)
+                  //固定的域名
+                  val domain = "http://www.imooc.com/"
+                  //截取域名后的路径字符
+                  val cms = url.substring(url.indexOf(domain) + domain.length)
+                  //将路径按"/"分割
+                  val types = cms.split("/")
+            
+                  //根据路径后缀截取出类型(课程或手记),以及对应id, 例如: /video/8701
+                  var cmsType = ""
+                  var cmsId = 0L
+                  if (types.length > 1) {
+                    cmsType = types(0)
+                    cmsId = types(1).toLong
+                  }
+            
+                  val city = ""
+                  val time = arr(0)
+                  //截取出time中的日期,并去除-, 例如 2016-11-10 00:01:02 => 20161110
+                  val day = time.substring(0, 10).replaceAll("-", "")
+            
+                  //这个Row需要和Struct中的字段对应
+                  Row(url, cmsType, cmsId, traffic, ip, city, time, day)
+                } catch {
+            
+                  //错误时返回0
+                  case e:Exception => {println("error")
+                    Row("","",0L,0L,"","","","")}
+                }
+              }
+            
+            }
+            
+            
+            主类
+              def main(args: Array[String]): Unit = {
+                val spark = SparkSession.builder().appName("StatCleanJob").master("local[2]").getOrCreate()
+            
+                //读取进行第一步清洗后的文件
+                val accessRDD = spark.sparkContext.textFile("C:\\Users\\97038\\Desktop\\access.log")
+            
+                //RDD => DataFrame
+                //将rdd转df,需要 将数据手动解析为 指定的schema格式
+                //我增加了一步过滤操作
+                val accessDF = spark.createDataFrame(accessRDD.filter(item => {item.split("\t")(1).length > 10})map(item => AccessConvertUtil.parseLog(item)),AccessConvertUtil.struct)
+                accessDF.printSchema()
+                accessDF.show(100,false)
+            
+                spark.stop()
+              }
+        >
+
+* 使用github上的一个项目:ipdatabase, 来解析ip对应的城市
+    * clone,并打包到本地仓库
+    >
+        此处遇到一个导入本地jar后,运行jar中的类,提示无法找到资源文件的bug,已解决(我的解决方法是修改jar包代码,读取classpath下的流的方法.)
+        此处教程中使用的方法是,将jar包中的找不到的文件拷贝到自己的resource目录下
+    >
+    * 使用如下代码,根据ip解析出ip对应城市
+    >
+          def getCity(ip:String) :String = {
+            IpHelper.findRegionByIp(ip)
+          }
+    >
+    
+* 将解析出的结果保存
+    >
+        
+        //保存解析结果,并根据day字段分区
+        accessDF
+          .coalesce(1)//指定输出的文件的个数
+          .write.format("parquet")
+            .mode(SaveMode.Overwrite)//指定文件保存模式,当有文件时,重写.
+          .partitionBy("day").save("C:\\Users\\97038\\Desktop\\out2")
+
     >
