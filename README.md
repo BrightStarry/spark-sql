@@ -1,5 +1,5 @@
 #### Spark
-* 阅读官方文档笔记,见ReadDoc.md
+* 阅读Spark SQL相关官方文档笔记,见SparkSQLDoc.md
 
 * 分布式的基于内存的列式存储计算框架
 * MapReduce局限性
