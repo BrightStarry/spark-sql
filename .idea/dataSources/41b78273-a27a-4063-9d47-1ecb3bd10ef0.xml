@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<dataSource name="spark-demo@localhost">
+  <database-model serializer="dbm" rdbms="MYSQL" format-version="4.4">
+    <root id="1"/>
+    <schema id="2" parent="1" name="spark-demo">
+      <Current>1</Current>
+      <Visible>1</Visible>
+    </schema>
+    <schema id="3" parent="1" name="activemq"/>
+    <schema id="4" parent="1" name="fuliqiu"/>
+    <schema id="5" parent="1" name="information_schema"/>
+    <schema id="6" parent="1" name="mysql"/>
+    <schema id="7" parent="1" name="performance_schema"/>
+    <schema id="8" parent="1" name="rm"/>
+    <schema id="9" parent="1" name="smssender"/>
+    <schema id="10" parent="1" name="spider1"/>
+    <schema id="11" parent="1" name="spidertest1"/>
+    <schema id="12" parent="1" name="starfire"/>
+    <schema id="13" parent="1" name="sys"/>
+    <schema id="14" parent="1" name="test"/>
+    <schema id="15" parent="1" name="test-security"/>
+    <schema id="16" parent="1" name="we_chat_order"/>
+    <schema id="17" parent="1" name="zx-security"/>
+    <schema id="18" parent="1" name="zx_blogs"/>
+    <table id="19" parent="2" name="day_video_access_topn_stat"/>
+    <table id="20" parent="2" name="day_video_city_access_topn_stat"/>
+    <table id="21" parent="2" name="day_video_traffic_access_topn_stat"/>
+    <column id="22" parent="19" name="id">
+      <Position>1</Position>
+      <DataType>bigint(20)|0</DataType>
+      <NotNull>1</NotNull>
+      <SequenceIdentity>1</SequenceIdentity>
+    </column>
+    <column id="23" parent="19" name="day">
+      <Position>2</Position>
+      <DataType>varbinary(8)|0</DataType>
+      <NotNull>1</NotNull>
+    </column>
+    <column id="24" parent="19" name="cms_id">
+      <Position>3</Position>
+      <DataType>bigint(20)|0</DataType>
+      <NotNull>1</NotNull>
+    </column>
+    <column id="25" parent="19" name="times">
+      <Position>4</Position>
+      <DataType>bigint(20)|0</DataType>
+      <NotNull>1</NotNull>
+    </column>
+    <key id="26" parent="19" name="PRIMARY">
+      <NameSurrogate>1</NameSurrogate>
+      <ColNames>id</ColNames>
+      <Primary>1</Primary>
+    </key>
+    <column id="27" parent="20" name="id">
+      <Position>1</Position>
+      <DataType>bigint(20)|0</DataType>
+      <NotNull>1</NotNull>
+      <SequenceIdentity>1</SequenceIdentity>
+    </column>
+    <column id="28" parent="20" name="day">
+      <Position>2</Position>
+      <DataType>varbinary(8)|0</DataType>
+      <NotNull>1</NotNull>
+    </column>
+    <column id="29" parent="20" name="city">
+      <Position>3</Position>
+      <DataType>varbinary(20)|0</DataType>
+      <NotNull>1</NotNull>
+    </column>
+    <column id="30" parent="20" name="cms_id">
+      <Position>4</Position>
+      <DataType>bigint(20)|0</DataType>
+      <NotNull>1</NotNull>
+    </column>
+    <column id="31" parent="20" name="times">
+      <Position>5</Position>
+      <DataType>bigint(20)|0</DataType>
+      <NotNull>1</NotNull>
+    </column>
+    <column id="32" parent="20" name="times_rank">
+      <Position>6</Position>
+      <DataType>int(11)|0</DataType>
+      <NotNull>1</NotNull>
+    </column>
+    <key id="33" parent="20" name="PRIMARY">
+      <NameSurrogate>1</NameSurrogate>
+      <ColNames>id</ColNames>
+      <Primary>1</Primary>
+    </key>
+    <column id="34" parent="21" name="id">
+      <Position>1</Position>
+      <DataType>bigint(20)|0</DataType>
+      <NotNull>1</NotNull>
+      <SequenceIdentity>1</SequenceIdentity>
+    </column>
+    <column id="35" parent="21" name="day">
+      <Position>2</Position>
+      <DataType>varbinary(8)|0</DataType>
+      <NotNull>1</NotNull>
+    </column>
+    <column id="36" parent="21" name="cms_id">
+      <Position>3</Position>
+      <DataType>bigint(20)|0</DataType>
+      <NotNull>1</NotNull>
+    </column>
+    <column id="37" parent="21" name="traffic_sum">
+      <Position>4</Position>
+      <DataType>bigint(20)|0</DataType>
+      <NotNull>1</NotNull>
+    </column>
+    <key id="38" parent="21" name="PRIMARY">
+      <NameSurrogate>1</NameSurrogate>
+      <ColNames>id</ColNames>
+      <Primary>1</Primary>
+    </key>
+  </database-model>
+</dataSource>

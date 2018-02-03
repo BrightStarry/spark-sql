@@ -1014,3 +1014,200 @@
           .partitionBy("day").save("C:\\Users\\97038\\Desktop\\out2")
 
     >
+    
+* 统计topN视频
+    * DataFrame方式
+        >
+               /**
+                 * 最受欢迎的topn视频, dataFrame方式
+                 */
+               def videoAccessTopNStat(spark: SparkSession): Unit = {
+             
+                 import spark.implicits._
+                 //导入函数功能
+                 import org.apache.spark.sql.functions._
+             
+                 //读取上一步的数据
+                 val accessDF = spark.read.load("C:\\Users\\97038\\Desktop\\out2")
+                 accessDF.printSchema()
+                 accessDF.show(false)
+                 val videoAccessTopNDF = accessDF
+                   .filter($"day" === "20161110" && $"cmsType" === "video") //过滤出目标时间的,类型为视频的记录
+                   .groupBy("day", "cmsId") //根据天/视频id分组
+                   .agg(count("cmsId").as("times")) //统计每个id的记录数
+                   .orderBy($"times".desc) //根据该次数,倒序排序
+                 videoAccessTopNDF.show(false)
+               }
+        >
+    * sql方式
+        >
+              /**
+                * 最受欢迎的topn视频, sql方式
+                */
+              def videoAccessTopNStat2(spark: SparkSession): Unit = {
+                //读取上一步的数据
+                spark.read.load("C:\\Users\\97038\\Desktop\\out2").createOrReplaceTempView("accessDF")
+                val accessDF = spark.sql("select day,cmsId,count(1) as times from accessDF where day = '20161110' and cmsType = 'video' group by day,cmsId order by times desc")
+                accessDF.show(false)
+              }
+        >
+
+* 创建MySQL工具类
+
+* 创建数据表
+
+* 创建dao类
+
+* 将之前统计的TopN结果保存到数据库
+    >
+        /**
+          * 将统计结果写入mysql
+          * foreachPartition遍历每个分区的记录,每次循环获取到的是一个分区的所有记录
+          */
+        resultDF.foreachPartition(partitionList => {
+          val list = new ListBuffer[DayVideoAccessStat]
+          partitionList.foreach(item => {
+            val day = item.getAs[String]("day")
+            val cmsId = item.getAs[Long]("cmsId")
+            val times = item.getAs[Long]("times")
+            list.append(DayVideoAccessStat(day,cmsId,times))
+          })
+          StatDao.insertDayVideoAccessStat(list)
+        })
+    >
+    
+* 统计每个城市,观看次数最多的TopN视频.
+    >
+          /**
+            * 按照城市统计Topn课程
+            */
+          def videoAccessTopNStatByCity(spark: SparkSession) : DataFrame = {
+            import spark.implicits._
+        
+            val accessDF = spark.read.load("C:\\Users\\97038\\Desktop\\out2")
+            accessDF.printSchema()
+            accessDF.show(false)
+        
+            val videoAccessTopNDF = accessDF
+              .filter($"day" === "20161110" && $"cmsType" === "video") //过滤出目标时间的,类型为视频的记录
+              .groupBy("day","city", "cmsId") //根据天/视频id分组
+              .agg(count("cmsId").as("times"))
+            videoAccessTopNDF.show(false)
+        
+            //Window函数在Spark SQL中的使用
+            videoAccessTopNDF
+              .select($"day",$"city",$"cmsId",$"times",
+                row_number().over(Window.partitionBy($"city").orderBy($"times".desc)).as("timesRank"))//新增一个根据城市分组,然后根据times排序,显示排名的列
+                .filter($"timesRank" <=3 ).show(false) //每个城市最受欢迎的前3个课程
+            videoAccessTopNDF
+          }
+    >
+* 使用类似的操作存入mysql
+
+* 按流量统计TopN课程,也进行类似的存入数据库的操作
+
+
+#### 数据可视化展示 
+* echarts 
+* highcharts
+* D3.js
+* HUE
+* Zeppelin
+
+#### ECharts
+* 简单的从数据库读取了每日访问数Top5数据,展示了一个饼图
+
+#### Zeppelin
+* 可以将hive/spark/hbase/jdbc等各类数据源的数据快速生成图表
+* 下载(700+M我去)
+* 启动
+> ./bin/zeppelin-daemon.sh start 
+* 访问默认8080端口,默认用户密码为admin
+
+* 选择interpreter,操作jdbc,并配置url/user/pwd/driver/jar等
+
+* 新建notebook,然后选择jdbc,然后输入语句查询出需要的数据,然后配置需要的图表.还可以导出为csv文件等
+
+#### Spark On YARN
+在Spark中，支持4种运行模式：
+1）Local：开发时使用  
+2）Standalone： 是Spark自带的，如果一个集群是Standalone的话，那么就需要在多台机器上同时部署Spark环境  
+3）YARN：建议大家在生产上使用该模式，统一使用YARN进行整个集群作业(MR、Spark)的资源调度  
+4）Mesos  
+
+* Client模式
+    >
+        	Driver运行在Client端(提交Spark作业的机器)
+        	Client会和(在yarn上)请求到的Container进行通信来完成作业的调度和执行，Client是不能退出的
+        	日志信息会在控制台输出：便于我们测试
+    >
+* Cluster模式
+    >
+        	Driver运行在ApplicationMaster中
+        	Client只要提交完作业之后就可以关掉，因为作业已经在YARN上运行了
+        	日志是在终端看不到的，因为日志是在Driver上，只能通过yarn logs -applicationIdapplication_id
+    >
+
+* 例子,求pi的位数, 开启YARN,然后在服务器上运行即可
+    >
+        ./bin/spark-submit \
+        --class org.apache.spark.examples.SparkPi \
+        --master yarn \
+        --executor-memory 1G \
+        --num-executors 1 \
+        /zx/spark-2.2.1-bin-hadoop2.7/examples/jars/spark-examples_2.11-2.2.1.jar \
+                 4
+        
+        此处的yarn就是我们的yarn client模式
+        如果要使用yarn cluster模式的话，指定其为yarn-cluster
+        
+        必须设置 HADOOP_CONF_DIR or YARN_CONF_DIR 其中一个参数
+                在spark-env中添加 export HADOOP_CONF_DIR=/zx/hadoop/etc/hadoop
+        
+        该错误org.apache.spark.SparkException: Yarn application has already ended! It might have been killed or unable to launch application master
+        尝试在yarn-site.xml中添加
+        <property>
+            <name>yarn.nodemanager.pmem-check-enabled</name>
+            <value>false</value>
+        </property>
+        <property>
+            <name>yarn.nodemanager.vmem-check-enabled</name>
+            <value>false</value>
+        </property>
+        
+        
+        
+            <property>    
+                <name>yarn.resourcemanager.address</name>    
+                <value>hadoop000:8032</value>    
+            </property>    
+            <property>    
+                <name>yarn.resourcemanager.scheduler.address</name>    
+                <value>hadoop000:8030</value>    
+            </property>    
+            <property>    
+                <name>yarn.resourcemanager.resource-tracker.address</name>    
+                <value>hadoop000:8031</value>    
+            </property>    
+            <property>    
+                <name>yarn.resourcemanager.admin.address</name>    
+                <value>hadoop000:8033</value>    
+            </property>    
+            <property>    
+                <name>yarn.resourcemanager.webapp.address</name>    
+                <value>hadoop000:8088</value>    
+            </property> 
+            
+            hadoop000: starting namenode, logging to /zx/hadoop/logs/hadoop-root-namenode-izuf673s24f4r2mvpi0dpjz.out
+            hadoop000: starting datanode, logging to /zx/hadoop/logs/hadoop-root-datanode-izuf673s24f4r2mvpi0dpjz.out
+            Starting secondary namenodes [0.0.0.0]
+            0.0.0.0: starting secondarynamenode, logging to /zx/hadoop/logs/hadoop-root-secondarynamenode-izuf673s24f4r2mvpi0dpjz.out
+            starting yarn daemons
+            starting resourcemanager, logging to /zx/hadoop/logs/yarn-root-resourcemanager-izuf673s24f4r2mvpi0dpjz.out
+            hadoop000: starting nodemanager, logging to /zx/hadoop/logs/yarn-root-nodemanager-izuf673s24f4r2mvpi0dpjz.out
+
+        
+        
+        yarn logs -applicationIdapplication_id application_1517670062174_0001
+        
+    >

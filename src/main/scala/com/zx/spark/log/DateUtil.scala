@@ -1,6 +1,5 @@
-package com.zx.spark.demo
+package com.zx.spark.log
 
-import java.text.SimpleDateFormat
 import java.util.{Date, Locale}
 
 import org.apache.commons.lang3.time.FastDateFormat

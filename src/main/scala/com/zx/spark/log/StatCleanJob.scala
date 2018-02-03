@@ -5,7 +5,7 @@ import org.apache.spark.sql.{SaveMode, SparkSession}
 /**
   * author:ZhengXing
   * datetime:2018-01-30 20:00
-  * 使用spark进行数据清洗操作
+  * 第二步,将清洗后的数据进行解析,
   */
 object StatCleanJob {
   def main(args: Array[String]): Unit = {
