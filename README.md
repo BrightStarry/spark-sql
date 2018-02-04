@@ -1159,7 +1159,7 @@
                  4
         
         此处的yarn就是我们的yarn client模式
-        如果要使用yarn cluster模式的话，指定其为yarn-cluster
+        如果要使用yarn cluster模式的话，指定其为yarn-cluster(废弃) 或者该参数不变,再指定参数--deploy-mode cluster
         
         必须设置 HADOOP_CONF_DIR or YARN_CONF_DIR 其中一个参数
                 在spark-env中添加 export HADOOP_CONF_DIR=/zx/hadoop/etc/hadoop
@@ -1175,39 +1175,68 @@
             <value>false</value>
         </property>
         
-        
-        
-            <property>    
-                <name>yarn.resourcemanager.address</name>    
-                <value>hadoop000:8032</value>    
-            </property>    
-            <property>    
-                <name>yarn.resourcemanager.scheduler.address</name>    
-                <value>hadoop000:8030</value>    
-            </property>    
-            <property>    
-                <name>yarn.resourcemanager.resource-tracker.address</name>    
-                <value>hadoop000:8031</value>    
-            </property>    
-            <property>    
-                <name>yarn.resourcemanager.admin.address</name>    
-                <value>hadoop000:8033</value>    
-            </property>    
-            <property>    
-                <name>yarn.resourcemanager.webapp.address</name>    
-                <value>hadoop000:8088</value>    
-            </property> 
-            
-            hadoop000: starting namenode, logging to /zx/hadoop/logs/hadoop-root-namenode-izuf673s24f4r2mvpi0dpjz.out
-            hadoop000: starting datanode, logging to /zx/hadoop/logs/hadoop-root-datanode-izuf673s24f4r2mvpi0dpjz.out
-            Starting secondary namenodes [0.0.0.0]
-            0.0.0.0: starting secondarynamenode, logging to /zx/hadoop/logs/hadoop-root-secondarynamenode-izuf673s24f4r2mvpi0dpjz.out
-            starting yarn daemons
-            starting resourcemanager, logging to /zx/hadoop/logs/yarn-root-resourcemanager-izuf673s24f4r2mvpi0dpjz.out
-            hadoop000: starting nodemanager, logging to /zx/hadoop/logs/yarn-root-nodemanager-izuf673s24f4r2mvpi0dpjz.out
-
-        
-        
+        查看指定id的日志
         yarn logs -applicationIdapplication_id application_1517670062174_0001
         
     >
+
+* 在yarn上运行清洗作业
+    >
+        打包时要注意，pom.xml中需要添加如下plugin
+        <plugin>
+            <artifactId>maven-assembly-plugin</artifactId>
+            <configuration>
+                <archive>
+                    <manifest>
+                        <mainClass></mainClass>
+                    </manifest>
+                </archive>
+                <descriptorRefs>
+                    <descriptorRef>jar-with-dependencies</descriptorRef>
+                </descriptorRefs>
+            </configuration>
+        </plugin>
+        
+        mvn assembly:assembly
+        
+        
+        提交
+        spark-submit \
+                --class com.zx.spark.log.StatFormatJob \
+                --master yarn-cluster \
+                --executor-memory 512m \
+                --num-executors 1 \
+                /zx/spark-sql-1.0-jar-with-dependencies.jar \
+                file:///zx/10000_access.log file:///zx/out
+        
+        
+        bug
+        提交后,一直报Application report for application_1517722885267_0002 (state: ACCEPTED) 
+        修改/etc/hadoop/capacity-scheduler.xml 文件中的yarn.scheduler.capacity.maximum-am-resource-percent属性,
+        将其从0.1修改到0.5. 该属性表示集群每个节点分配给主服务器的最大资源百分比.因为我们是单机,所以,提高该值.
+        
+        如上还不行,可以尝试将那个系数改为1试试. 我没尝试. 直接将yarn最小要分配的内存数改小了.然后将提交作业分配的内存由1G改为512m(因为spark还有个最小内存限制为400M+)
+         <property>
+             <name>yarn.scheduler.minimum-allocation-mb</name>
+             <value>256</value>
+         </property>
+         <property>
+             <name>yarn.scheduler.increment-allocation-mb</name>
+             <value>256</value>
+         </property>
+         
+         ...上面的错误似乎是我自己没有将代码中的SparkSession.master("local[2]")删除导致的.
+         此外,Application report for application_1517722885267_0002 (state: ACCEPTED) 是会重复输出若干次的.
+         此外,具体异常可在yarn 8088端口查看日志得到. 并且有一个here按钮,可以查看所有日志(如果日志信息过多,它会自动隐藏)
+    >
+
+#### 性能优化
+- 存储格式的选择: 行存储或列存储
+- 压缩格式的选择: 可设置spark.sql.parquet.compression.codec指定压缩格式,默认是snappy
+- 参数优化
+    - 并行度: spark.sql.shuffle.partitions,默认200, 表示分区数量,也就是并行执行的任务数量
+    - 分区字段类型推测: spark.sql.sources.partitionColumnTypeInference.enabled 可关闭
+
+#### 其他
+- 在spark sql中可以使用.语法读取json信息: 例如 a.b.c
+- 可以访问spark-packages.org,获取其他可用的外部数据源支持的包,添加包到maven.

@@ -5,8 +5,8 @@
       <webServer id="e3d28e22-d212-497c-b396-dc4e24490225" name="localhost" url="http://127.0.0.1">
         <fileTransfer port="0" mountedRoot="H:\ideaworkspace\spark-sql" accessType="MOUNT" />
       </webServer>
-      <webServer id="c69c49ae-05f8-40e4-84fc-b5984d682b65" name="zx">
-        <fileTransfer host="" port="22" accessType="SFTP">
+      <webServer id="c69c49ae-05f8-40e4-84fc-b5984d682b65" name="zx" url="http://106.14.7.29">
+        <fileTransfer host="106.14.7.29" port="22" accessType="SFTP">
           <advancedOptions>
             <advancedOptions dataProtectionLevel="Private" />
           </advancedOptions>
