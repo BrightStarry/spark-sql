@@ -796,4 +796,575 @@
         * thriftserver,不管启动多少个客户端(beeline或java api等),都是一个spark application
             并且,多个客户端间可以共享缓存数据等.
     
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+### [Structured Streaming Programming Guide ](http://spark.apache.org/docs/latest/structured-streaming-programming-guide.html)
+Structured Streaming 是可扩展的/容错的/构建于SparkSQL之上的流处理引擎.
+
+#### 实例: 基于TCP Socket 进行接收的文本的 Word Count  
+- 先构建SparkSession,通过它创建一个监听localhost：9999的服务器,并将接收到的数据转换为DataFrame以计算字数
+```
+import org.apache.spark.sql.functions._
+import org.apache.spark.sql.SparkSession
+
+val spark = SparkSession
+  .builder
+  .appName("StructuredNetworkWordCount")
+  .getOrCreate()
+  
+import spark.implicits._
+
+
+// 这个linesDataFrame表示一个包含流文本数据的无界表。该表包含一列属性名为“value”的字符串
+val lines = spark.readStream
+  .format("socket")
+  .option("host", "localhost")
+  .option("port", 9999)
+  .load()
+
+// Split the lines into words
+val words = lines.as[String].flatMap(_.split(" "))
+
+// Generate running word count
+val wordCounts = words.groupBy("value").count()
+```
+- 如上,lines读取到的是若干行接收到的文本. 然后将其转为string格式,然后使用flatMap,并在其中进行分割.最终会获取到输入的若干行文本的所有单词.(但此时还未运行)
+
+- 运行该服务,并将结果输出到控制台
+```
+// Start running the query that prints the running counts to the console
+val query = wordCounts.writeStream
+  .outputMode("complete")
+  .format("console")
+  .start()
+//等待服务关闭再往后运行
+query.awaitTermination()
+```
+
+- 在服务器上,可以如下开始运行/关闭
+```
+./bin/run-example org.apache.spark.examples.sql.streaming.StructuredNetworkWordCount localhost 9999
+nc -lk 9999
+```
+
+- 基本概念  
+将输入数据流看作 '输入表',到达流中的每个数据项像行一样被追加d到无界输入表中
+![输入](img/3.png)
+
+- 对输入表进行一系列查询(filter/map等或sql操作)将生成“结果表”。  
+每一个触发间隔（比如说，每隔1秒），新的行会被附加到输入表，经过一系列查询,最终更新结果表。  
+每当结果表得到更新时，都将更改的结果行写入外部接收器。
+![间隔处理](img/4.png)
+
+- 输出是指将表中内容写出到外部存储器.有如下模式
+    - Complete Mode(完整模式): 整个更新后的结果表将被写入到外部存储器
+    - Append Mode(追加模式): 只有上个触发器执行之后表中新增的结果行才会被写入外部存储器.
+    - Update Mode(更新模式): 只有上个触发器执行之后表中有更新的结果行才会被写入(Spark2.1.1+支持).如果查询不包含聚合，那么它将等同于Append模式。
+
+- 如上WordCount例子中,lines(DataFrame)是输入表,wordCounts(DataFrame)是结果表,中间的转换(split/groupBy等)就是查询.  
+每当有新数据输入,spark就会进行增量查询(将之前统计的每个单词计数,和新增的单词计数进行合并),来计算新的单词个数
+
+- 注意,Structured Streaming不会具体化整个表格,它读取输入流输入的最新数据,以增量的方式结果表进行更新,然后丢弃输入数据.它只保存了要更新结果表的最小中间状态数据(例如之前例子中的counts).
+
+- 许多流处理框架都要求用户自己维护自己的聚合，因此必须考虑容错和数据一致性.在这个模型中，Spark负责在有新数据时更新结果表，从而减轻用户对它的推理。
+
+#### 处理Event-time 和 Late Data
+- Event-time是数据中它自己携带的时间.许多应用中,可能需要通过该时间进行操作.例如 统计每分钟物联网设备生成的事件数,就需要事件的event-time进行判断(而不是spark接收到这些数据的时间).  
+这个event-time在spark streaming的如上模型中,来自物联网设备的每个事件记录都是输入表中的一行数据,event-time是行中的列值.  
+这允许window-based的聚合(例如根据每分钟的事件数)作为event-time列上特殊类型的分组和聚合. 每个时间窗口是一个组,每一行可以属于多个窗口(组).  
+并且spark streaming自然地处理晚于event-time到达的数据.因为spark正在更新结果表,当后面的数据到达时,它可以控制更新旧的aggregates.以及清理旧的aggregates来限制中间状态数据的大小.  
+从Spark 2.1开始，支持watermarking.允许用户指定late data的阈值(最晚多久时间),并允许引擎清理旧的状态.稍后详细讨论.
+
+#### Fault Tolerance Semantics 容错语义
+- 提供end-to-end exactly-once语义是structured streaming设计背后的关键目标之一。为此，我们设计了structured streaming的sources，sinks和engine，以便可靠地跟踪处理的确切进程，以便通过重新启动和/或重新处理来处理任何类型的故障。
+- spark的每个流源都有offset(类似于Kafka偏移量或Kinesis序列号),来跟踪流中的读取位置.
+- engine使用checkpointing(检查点)和write ahead logs(提前写入日志)来记录每个触发器中正在处理的数据的偏移范围.并且,流的sinks设计是幂等的. 
+- 通过replayable 的sources 和 幂等的sinks,Structured Streaming可以在任何故障下确保end-to-end exactly-once 语义.
+
+#### 使用Datasets and DataFrames API
+- 从spark2.0开始.Datasets and DataFrames可以表示 静态有界 或 流无界 数据. 所以在Structure Streaming 中可以同样的使用SparkSession创建DataFrame/Dataset来使用.
+
+#### 创建 streaming DataFrames and streaming Datasets
+Streaming DataFrames 可以通过 SparkSession.readStream()返回的DataStreamReader接口创建.
+
+####  Input Sources 
+- 一些数据源是不能容错的.因为不能保证在失败后可以使用 checkpointing的offset来重新使用数据.
+- 有一些内置数据源
+    - File source: 读取写入目录中的文件作为数据流.支持的文件格式有 text, csv, json, parquet. 查看API文档的DataStreamReader 接口. 注意，文件必须被原子地放置(移动过程是原子的)在给定的目录中，在大多数文件系统中，可以通过文件移动操作来实现。
+        - 参数
+            - path:文件目录
+            - maxFilesPerTrigger: 每个触发器中需要考虑的最大新文件数
+            - latestFirst: 当有大量文件积压时,是否要先处理最新的文件(default:false)
+            - fileNameOnly: 是否只基于文件名而不是在完整的路径上检查新文件(默认为false)
+            ```
+                如果为true,下面的文件将被看作相同的文件,因为他们的文件名相同
+                "file:///dataset.txt"
+                "s3://a/dataset.txt"
+                "s3n://a/b/dataset.txt"
+                "s3a://a/b/c/dataset.txt"
+            ```
+        - 对于指定格式的文件操作,可以查看DataStreamReader接口详细方法,例如parquet文件,可以DataStreamReader.parquet()
+    - Socket source (for testing): 从Socket中读取UTF-8格式的文本.只用于测试,因为该方式不提供end-to-end 保障
+        - 参数 : host 和 port
+    - Rate source (for testing): 每秒生成指定行数的数据,每行记录包含timestamp  和 value列. timestamp 是消息发送时间,Timestamp类型. value 是Long类型连接消息的计数统计.用0作为第一行.由于测试
+        - 参数
+            - rowsPerSecond (e.g. 100, default: 1):每秒应该生成多少行
+            - rampUpTime (e.g. 5s, default: 0s): 在生成速度变为rowsPerSecond,之前需要经过多少时间
+            - numPartitions (e.g. 10, default: Spark's default parallelism): 生成行的分区数
+        - 该数据源速度将尽力达到rowsPerSecond,但查询可能资源受限,可以调整numPartitions,以达到预期速度.
+    - Kafka source: kafka版本需0.10.0+, 可查看 [structured-streaming-kafka-integration](http://spark.apache.org/docs/latest/structured-streaming-kafka-integration.html)文档
+
+- 一些例子
+```scala
+val spark: SparkSession = ...
+
+// Socket 
+val socketDF = spark
+  .readStream
+  .format("socket")
+  .option("host", "localhost")
+  .option("port", 9999)
+  .load()
+
+socketDF.isStreaming    // Returns True for DataFrames that have streaming sources
+
+socketDF.printSchema
+
+// 读取File Source 中的csv文件
+val userSchema = new StructType().add("name", "string").add("age", "integer")
+val csvDF = spark
+  .readStream
+  .option("sep", ";")
+  .schema(userSchema)      // Specify schema of the csv files
+  .csv("/path/to/directory")    // Equivalent to format("csv").load("/path/to/directory")
+```
+这些例子中的DtaFrame是untyped.也就是说,编译时不检查DataFrame的schema,只在运行时检查.   
+像 map, flatMap一类的操作,需要在编译时知道类型.可以将转换这个 untyped streaming DataFrames 为 typed streaming Datasets.(之前的文档中有写(两种方式,反射或编程))
+
+#### Schema inference and partition of streaming DataFrames/Datasets
+- 默认下,基于文件的Structured Streaming需要指定schema,而不是依赖spark的自动推断.该限制确保一个不变的schema将用于streaming查询,即使在(自动推断??)失败的情况下.  
+在特殊情况下,可设置spark.sql.streaming.schemaInference为true,重新开启schema自动推断
+- 当目录下有/key=value/格式的子目录,会自动进行分区发现.如果定义的schema中有这些字段,则会将其自动推导为字段.这些子目录必须在查询开始时显示,并且是静态的.  
+例如,当 /year=2015/ 这个目录存在时,可以新增/year=2016/目录,但无法修改或新增分区列(例如增加一个/date=111/目录)
+
+#### Basic Operations - Selection, Projection, Aggregation
+- 大多数DataFrame/Dataset的通用操作都支持streaming,后面将讨论几个不支持的操作.
+```scala
+case class DeviceData(device: String, deviceType: String, signal: Double, time: DateTime)
+
+val df: DataFrame = ... // streaming DataFrame 使用物联网设备的数据 { device: string, deviceType: string, signal: double, time: string }
+val ds: Dataset[DeviceData] = df.as[DeviceData]    // 使用该schema将DataFrame转为Dataset
+
+// 两种类型的查询
+df.select("device").where("signal > 10")      // using untyped APIs   
+ds.filter(_.signal > 10).map(_.device)         // using typed APIs
+
+//两种类型的统计
+// Running count of the number of updates for each device type
+df.groupBy("deviceType").count()                          // using untyped API
+// Running average signal for each device type
+import org.apache.spark.sql.expressions.scalalang.typed
+ds.groupByKey(_.deviceType).agg(typed.avg(_.signal))    // using typed API
+
+//也可以将其注册为临时表,用sql调用
+df.createOrReplaceTempView("updates")
+spark.sql("select count(*) from updates")  // returns another streaming DF
+
+//校验一个DF/Dataset是否有 streaming data
+df.isStreaming
+```
+
+#### Window Operations on Event Time
+- 在一个滑动event time窗口上的聚合对于Structured Streaming来说是很简单的，并且与分组聚合非常相似。
+- 在分组聚合中,用户指定的分组列中,为每一个唯一值维护聚合值(例如计数)
+- 如果是基于窗口的聚合,为每个窗口的event time的每一行维护聚合值
+- 修改上面的例子,在stream中包含行和行的生成时间,不运行单词统计,而是统计10分钟的窗口内的单词数,每5分钟更新一次.例如12:00 - 12:10, 12:05 - 12:15, 12:10 - 12:20等等.
+- 现在,一个在12:07被接收的单词,该单词应该增加到两个窗口12:00 - 12:10 and 12:05 - 12:15
+![](img/5.png)  
+
+- 由于这个窗口类似gourp,在代码中,可以用groupBy() 和 window()来表示窗口的聚合
+```scala
+import spark.implicits._
+
+val words = ... // streaming DataFrame of schema { timestamp: Timestamp, word: String }
+
+// 使用window 和 word 对数据进行分组,并统计每个分组的计数
+val windowedCounts = words.groupBy(
+  //根据timestamp字段,统计的窗口为10分钟内,统计频率为5分钟
+  window($"timestamp", "10 minutes", "5 minutes"),
+  $"word"
+).count()
+``` 
+
+#### Handling Late Data and Watermarking(处理延迟数据和水印)
+- 现在,考虑一个数据延期到达会发生什么情况. 如下,一个event time(也就是timestamp属性)在12:04的数据在12:11才被应用接收.  
+应用应该使用12:04而不是12:11来更新旧的12:00-12:10的统计结果.在这此处可以自动处理,Structured Streaming可以长时间保持部分聚合的中间状态,可以让延期数据更新旧的窗口集合.
+![](img/6.png) 
+
+- 然而,为了持续多日运行该查询,系统必须限制它累积的中间内存状态量.这需要系统知道何时可以从内存中删除旧聚合数据,因为应用不会再收到属于该聚合的更晚的数据.  
+为了实现这一点，我们在Spark 2.1中引入了watermarking功能，让引擎自动跟踪数据中当前的 event time，并相应地尝试清理旧状态。  
+可以通过指定event time列和event time延迟的最大的阈值(旧聚合最多保存多久)来定义查询的watermarking.  
+对于一个从时间T开始的特定窗口,引擎允许延期的数据更新旧聚合,直到(该引擎最大的event time - 延期阈值 > T).  
+也就是说,阈值内的延期数据将被更新,之后的将被丢弃.
+- 例子如下
+```scala
+import spark.implicits._
+
+val words = ... // streaming DataFrame of schema { timestamp: Timestamp, word: String }
+
+// Group the data by window and word and compute the count of each group
+val windowedCounts = words
+    .withWatermark("timestamp", "10 minutes")//设置timestamp为event time列, 最大延期阈值为10分钟
+    .groupBy(
+        window($"timestamp", "10 minutes", "5 minutes"),
+        $"word")
+    .count()
+```
+- 该例子设置timestamp为event time列, 最大延期阈值为10分钟.如果该例子以Update output mode模式运行(输出模式,稍后再议),  
+引擎将不断更新结果表中窗口的计数,直到水印的对应event time列的时间落后当前event time超过10分钟.
+![](img/7.png) 
+- 如上图所示,引擎跟踪的最大时间线是蓝色虚线.红线是每个触发开始时(最大事件时间-阈值)设置的水印.例如当引擎观察数据(12:14，dog),它将下一个触发器的水印设置为 12:04.  
+这个水印使引擎保持中间状态10分钟，以允许计算晚期数据.例如,数据(12:09,cat)乱序和迟到,他本应在 12:00 - 12:10 和 12:05 - 12:15窗口中;
+但因为它大于水印12:04,该中间状态仍旧存在,所以可以正确更新.  
+但是,当水印更新到12:11时,窗口的中间状态（12:00 - 12:10）被清除，并且所有后续数据(例如12:04,donkey)将被忽略.  
+注意,根据更新模式的规定,每次触发更新时,结果表中更新的行(即紫色行)都将被输出到sink.
+ps:水印的更新也是每次间隔更新时更新的,例如此处的每5分钟一次更新,当更新时发现水印距离当前最大的事件时间超过10分钟时,则更新水印为该最大事件时间的前10分钟.
+
+- 一些Sink(例如file)可能不支持更新模式所需的细粒度更新,为了支持这些Sink,spark还支持append mode,只有最后窗口的计数被输出到Sink.如下所示
+![](img/8.png) 
+- 该模式中,部分计数不会更新到结果表,也不写入sink.只有当该窗口集合不再被存储在中间状态中后(也就是水印时间大于该窗口结束时间后),才将其附加到结果表/sink.    
+例如窗口12:00-12:10的技术,在水印更新到12:11之后才被附加到结果表.  
+
+- 清理聚合状态的水印,必须满足以下条件(spark2.1.1).
+    - 输出模式必须是 追加或更新模式. 完成模式需要保存所有结果表的数据,因为无需也不能使用水印功能.
+    - 该聚合必须有event-time 列,或一个有event-time 列的窗口.
+    - 必须将聚合中使用的event time列,作为水印中的event time列.例如  df.withWatermark("time", "1 min").groupBy("time2").count() ,  
+    这样聚合和水印使用的event time列不一致,在附加模式上将无法使用.
+    - 必须在聚合前调用水印,以便使用水印中的细节.  df.groupBy("time").count().withWatermark("time", "1 min")在附加模式上是无效的.
+
+#### Join Operations
+- Streaming DataFrames 可以与 static DataFrames  join,创建一个新的 streaming DataFrames
+```scala
+val staticDf = spark.read. ...
+val streamingDf = spark.readStream. ...
+
+streamingDf.join(staticDf, "type")          // inner equi-join with a static DF
+streamingDf.join(staticDf, "type", "right_join")  // right outer join with a static DF  
+```
+
+#### Streaming Deduplication
+- 可以使用event的唯一标识符对数据流中重复记录进行删除.查询将存储以前记录的必要数量的数据，以便它可以过滤重复的记录.  
+可以在使用水印功能或不使用的情况下使用deduplication
+    - 使用水印: 如果有一个重复记录到达时间有上限，则可以在事件时间列上定义水印，并使用guid和事件时间列进行重复数据删除。  
+    查询将使用水印从过去的记录中删除旧的状态数据，这些记录不会再有任何重复。这限制了查询必须维护的状态量。
+    - 没有水印: 因为重复的记录可以没有到达限制，查询将来自所有过去记录的数据存储为状态。
+```scala
+val streamingDf = spark.readStream. ...  // columns: guid, eventTime, ...
+
+// Without watermark using guid column
+streamingDf.dropDuplicates("guid")
+
+// With watermark using guid and eventTime columns
+streamingDf
+  .withWatermark("eventTime", "10 seconds")
+  .dropDuplicates("guid", "eventTime")
+```
+
+#### Arbitrary Stateful Operations(任意状态操作)
+- 许多情况下需要比聚合更高级的有状态的操作,例如,有些情况下,需要从事件的数据流中跟踪session.  
+对于这样的会话化，您必须将任意类型的数据保存为状态，并使用每个触发器中的数据流事件对状态进行任意操作。  
+spark2.2中,可以使用mapGroupsWithState 和更强大的 flatMapGroupsWithState 来完成.   
+这两种方法都可以在 grouped Datasets上使用用户定义的代码来更新用户定义的状态.
+- 具体可查看[API文档](http://spark.apache.org/docs/latest/api/java/org/apache/spark/sql/streaming/GroupState.html)
+和[例子](https://github.com/apache/spark/blob/v2.2.1/examples/src/main/java/org/apache/spark/examples/sql/streaming/JavaStructuredSessionization.java)
+
+#### Unsupported Operations
+- DataFrames/Datasets不支持的操作
+    - streaming Datasets不支持多个流聚合(例如streaming DF的聚合链)
+    - streaming Datasets不支持limit和取前N行记录
+    - streaming Datasets不支持Distinct操作
+    - 只有在完成模式的聚合操作之后,streaming Datasets才支持排序操作
+    - streaming和static Datasets之间的Outer join是有条件的
+        - 不支持与streaming Dataset进行Full outer join
+        - 不支持streaming Dataset 在右侧的Left outer join 
+        - 不支持streaming Dataset在左侧的Right outer join
+        - 不支持两个streaming Datasets间任何类型的join
+ 
+- 此外，还有一些Dataset方法无法在 streaming Datasets上工作。它们是立即运行查询和返回结果的操作，这在流数据集上是没有意义的。相反，可以通过显式地启动一个流查询来完成这些功能(请参阅下一节)。   
+    - count(): 无法从 streaming Dataset返回单个计数. 相反,可以使用 ds.groupBy().count()返回一个包含running count的streaming Dataset
+    - foreach(): 使用ds.writeStream.foreach(...) (见下一节).    
+    - show(): 使用 console sink(见下一次节).
+
+- 如果尝试这些操作,将得到类似 'operation XYZ is not supported with streaming DataFrames/Datasets'这样的 AnalysisException .  
+虽然其中一些可能会在未来的Spark版本中得到支持，但还有一些基本上难以有效地实现对数据流的传输。  
+例如，不支持对输入流进行排序，因为它需要跟踪流中接收到的所有数据。因此，从根本上难以有效执行
+
+#### Starting Streaming Queries
+- 一旦定义了最终结果的DataFrame/Dataset,剩下的就是开始Streaming计算.为此,必须通过Dataset.writeStream()返回的DataStreamWriter  
+必须在该接口中指定以下一个或多个.
+    - 输出Sink的详细信息,例如数据格式/位置等
+    - 输出模式
+    - 查询名,可选的,指定一个唯一的名字进行标识
+    - 触发间隔(Trigger interval),可选的.如果未指定,系统将在处理完前面的数据后,检查新数据的可用性.如果因为之前的处理没有完成而错过触发时间,系统将立即触发处理.
+    - 检查点位置(Checkpoint location),对于一些可保证end to end 的sink,指定系统将写入所有检查点信息的位置。 这应该是HDFS兼容的容错文件系统中的一个目录。 检查点的语义将在下一节详细讨论
     
+    
+#### Output Mode 
+- Complete Mode(完整模式): 整个更新后的结果表将被写入到外部存储器
+- Append Mode(追加模式): 只有上个触发器执行之后表中新增的结果行才会被写入外部存储器.该模式支持那中添加的行永远不会改变的查询.  
+因此,该模式保证每一行只输出一次,例如,select, where, map, flatMap, filter, join等查询支持该模式.
+- Update Mode(更新模式): 只有上个触发器执行之后表中有更新的结果行才会被写入(Spark2.1.1+支持).如果查询不包含聚合，那么它将等同于Append模式。
+
+- 具体模式支持的操作等查看文档
+
+#### Output Sinks
+- File Sink: 输出到文件
+```scala
+writeStream
+    .format("parquet")        // can be "orc", "json", "csv", etc.
+    .option("path", "path/to/destination/dir")
+    .start()
+```
+
+- Kafka sink: 输出到kafka的一个或多个topic
+```scala
+writeStream
+    .format("kafka")
+    .option("kafka.bootstrap.servers", "host1:port1,host2:port2")
+    .option("topic", "updates")
+    .start()
+```
+
+- Foreach sink: 在输出中的记录上运行任意的计算。请参阅后面的小节
+```scala
+writeStream
+    .foreach(...)
+    .start()
+```
+
+- Console sink (for debugging): 每当有触发器时，将输出输出到控制台/stdout。附加和完整的输出模式都得到了支持。这应该用于在低数据量上进行调试，因为在每次触发之后，整个输出被收集并存储在驱动程序的内存中。
+```scala
+writeStream
+    .format("console")
+    .start()
+```
+
+- Memory sink (for debugging) :输出作为内存中的表存储在内存中。附加和完整的输出模式都得到了支持。当整个输出被收集并存储在驱动程序的内存中时，这应该用于在低数据量上进行调试。因此，要谨慎使用它
+```scala
+writeStream
+    .format("memory")
+    .queryName("tableName")
+    .start()
+```
+
+- 其他相关支持等,查看文档
+
+- 代码
+```scala
+// ========== DF with no aggregations ==========
+val noAggDF = deviceDataDf.select("device").where("signal > 10")   
+
+// Print new data to console
+noAggDF
+  .writeStream
+  .format("console")
+  .start()
+
+// Write new data to Parquet files
+noAggDF
+  .writeStream
+  .format("parquet")
+  .option("checkpointLocation", "path/to/checkpoint/dir")
+  .option("path", "path/to/destination/dir")
+  .start()
+
+// ========== DF with aggregation ==========
+val aggDF = df.groupBy("device").count()
+
+// Print updated aggregations to console
+aggDF
+  .writeStream
+  .outputMode("complete")
+  .format("console")
+  .start()
+
+// Have all the aggregates in an in-memory table
+aggDF
+  .writeStream
+  .queryName("aggregates")    // this query name will be the table name
+  .outputMode("complete")
+  .format("memory")
+  .start()
+
+spark.sql("select * from aggregates").show()   // interactively query in-memory table
+```
+
+#### Using Foreach
+- foreach操作允许在输出数据上计算任意操作。在Spark 2.1中，这只适用于Scala和Java。要使用它。 必须为每个writer(scala/java文档)实现接口，它有一个方法，每当出现一个触发器后生成的行序列时，就会调用这个方法。注意以下要点。
+    - 该写入器必须是可序列化的，因为它将被序列化并发送给执行程序。
+    - 所有的这三个方法：open, process and close将在执行器上调用
+    - 只有在调用open方法时，写入器必须完成所有初始化(例如打开连接、启动事务等)。请注意，如果在创建对象时在类中有任何初始化，那么该初始化将在驱动程序中发生(因为这是创建实例的地方)，这可能不是您想要的。
+    - version and partition 在open中有两个参数，惟一地表示需要被推出的一组行。版本是一个单调递增的id，随着每个触发器的增加而增加。分区是表示输出分区的id，因为输出是分布式的，并且将在多个执行器上进行处理。
+    - open 可以使用version and partition，选择是否需要写入行序列。因此，它可以返回true(继续写)，或false(不需要写)。如果返回false，则不会在任何行上调用进程。  
+    例如，在局部失败之后，失败触发器的一些输出分区可能已经提交给数据库。根据存储在数据库中的元数据，作者可以识别已经提交的分区，并相应地返回false，以跳过再次提交它们。
+    - 每当调用open时，也将调用close(除非JVM由于某些错误而退出)。这是正确的，即使公开的回报是错误的。如果在处理和写入数据时出现任何错误，那么将会调用close。清理状态(例如连接、事务等)是您的责任，这些都是在开放中创建的，这样就不会有资源泄漏
+
+#### Managing Streaming Queries
+- StreamingQuery查询启动时创建的对象可用于监视和管理查询。
+```scala
+val query = df.writeStream.format("console").start()   // get the query object
+
+query.id          // get the unique identifier of the running query that persists across restarts from checkpoint data
+
+query.runId       // get the unique id of this run of the query, which will be generated at every start/restart
+
+query.name        // get the name of the auto-generated or user-specified name
+
+query.explain()   // print detailed explanations of the query
+
+query.stop()      // stop the query
+
+query.awaitTermination()   // block until query is terminated, with stop() or with error
+
+query.exception       // the exception if the query has been terminated with error
+
+query.recentProgress  // an array of the most recent progress updates for this query
+
+query.lastProgress    // the most recent progress update of this streaming query
+```
+ 
+- 您可以在一个SparkSession中启动任意数量的查询。他们都将同时运行共享群集资源。您可以使用sparkSession.streams()获取StreamingQueryManager 来管理当前活动的查询。 
+```scala
+val spark: SparkSession = ...
+
+spark.streams.active    // get the list of currently active streaming queries
+
+spark.streams.get(id)   // get a query object by its unique id
+
+spark.streams.awaitAnyTermination()   // block until any one of them terminates
+```
+
+#### Monitoring Streaming Queries
+- 有多种方法来监视活动流式查询。您可以使用Spark的Dropwizard Metrics支持将指标推送到外部系统，也可以以编程方式访问它们。
+
+
+#### Reading Metrics Interactively (以交互方式阅读指标)
+- 您可以使用streamingQuery.lastProgress()和直接获取活动查询的当前状态和指标 streamingQuery.status()。   
+在Scala 和Java中lastProgress()返回一个StreamingQueryProgress对象，它包含了关于流的最后一次触发所取得的进展的所有信息 - 处理了哪些数据，处理速率和延迟是多少等。还有 streamingQuery.recentProgress返回最后几个进度的数组
+
+- 此外，streamingQuery.status()在Scala和Java中返回一个StreamingQueryStatus对象。它提供了查询立即执行的信息——触发器活动、正在处理的数据等。
+```scala
+val query: StreamingQuery = ...
+
+println(query.lastProgress)
+
+/* Will print something like the following.
+
+{
+  "id" : "ce011fdc-8762-4dcb-84eb-a77333e28109",
+  "runId" : "88e2ff94-ede0-45a8-b687-6316fbef529a",
+  "name" : "MyQuery",
+  "timestamp" : "2016-12-14T18:45:24.873Z",
+  "numInputRows" : 10,
+  "inputRowsPerSecond" : 120.0,
+  "processedRowsPerSecond" : 200.0,
+  "durationMs" : {
+    "triggerExecution" : 3,
+    "getOffset" : 2
+  },
+  "eventTime" : {
+    "watermark" : "2016-12-14T18:45:24.873Z"
+  },
+  "stateOperators" : [ ],
+  "sources" : [ {
+    "description" : "KafkaSource[Subscribe[topic-0]]",
+    "startOffset" : {
+      "topic-0" : {
+        "2" : 0,
+        "4" : 1,
+        "1" : 1,
+        "3" : 1,
+        "0" : 1
+      }
+    },
+    "endOffset" : {
+      "topic-0" : {
+        "2" : 0,
+        "4" : 115,
+        "1" : 134,
+        "3" : 21,
+        "0" : 534
+      }
+    },
+    "numInputRows" : 10,
+    "inputRowsPerSecond" : 120.0,
+    "processedRowsPerSecond" : 200.0
+  } ],
+  "sink" : {
+    "description" : "MemorySink"
+  }
+}
+*/
+
+
+println(query.status)
+
+/*  Will print something like the following.
+{
+  "message" : "Waiting for data to arrive",
+  "isDataAvailable" : false,
+  "isTriggerActive" : false
+}
+*/
+```
+
+#### Reporting Metrics programmatically using Asynchronous APIs (以编程方式使用异步API报告度量)
+- 你也可以SparkSession通过附加一个StreamingQueryListener来异步监视与a相关的所有查询 。一旦附加了自定义StreamingQueryListener对象 sparkSession.streams.attachListener()，当查询开始和停止以及在活动查询中取得进展时，您将获得回调。这里是一个例子，
+```scala
+val spark: SparkSession = ...
+
+spark.streams.addListener(new StreamingQueryListener() {
+    override def onQueryStarted(queryStarted: QueryStartedEvent): Unit = {
+        println("Query started: " + queryStarted.id)
+    }
+    override def onQueryTerminated(queryTerminated: QueryTerminatedEvent): Unit = {
+        println("Query terminated: " + queryTerminated.id)
+    }
+    override def onQueryProgress(queryProgress: QueryProgressEvent): Unit = {
+        println("Query made progress: " + queryProgress.progress)
+    }
+})
+```
+
+#### Reporting Metrics using Dropwizard (使用Dropwizard报告度量)
+- Spark使用Dropwizard库支持报告指标。要同时报告结构化流查询的指标，您必须显式启用spark.sql.streaming.metricsEnabledSparkSession中的配置。
+```scala
+spark.conf.set("spark.sql.streaming.metricsEnabled", "true")
+// or
+spark.sql("SET spark.sql.streaming.metricsEnabled=true")
+```
+所有在SparkSession中启动的查询都将在启用配置后通过Dropwizard向任何接收器配置（例如Ganglia，Graphite，JMX等）报告指标。
+
+#### Recovering from Failures with Checkpointing (通过检查点来恢复故障)
+- 如果发生故障或故意关机，您可以恢复以前的查询进度和状态，并继续停止。这是通过检查点和写入日志来完成的。您可以使用检查点位置来配置查询，查询会将所有进度信息（即每个触发器中处理的偏移量的范围）和正在运行的聚合（例如，快速示例中的字数）保存到检查点位置。此检查点位置必须是HDFS兼容文件系统中的路径，并且可以在启动查询时在DataStreamWriter中设置为选项。
+```scala
+aggDF
+  .writeStream
+  .outputMode("complete")
+  .option("checkpointLocation", "path/to/HDFS/dir")
+  .format("memory")
+  .start()
+```
