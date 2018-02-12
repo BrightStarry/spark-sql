@@ -1,0 +1,46 @@
+spring:
+  kafka:
+    bootstrap-servers: 106.14.7.29:9092 #连接地址(也可给生产者/消费者单独配置)
+    #发送模版配置
+    template:
+      default-topic: test1 #默认发送的主题(可以在发送方法中发送给其他主题)
+    #监听器配置
+    listener:
+      #偏移量提交模式(AckMode类) RECORD:每条记录发送后提交;  BATCH(默认):每批记录(每次poll提交);
+      # TIME:每间隔ack-time,提交; COUNT:累积到ack-count条记录提交一次; COUNT_TIME:COUNT或TIME满足其一就提交;
+      # MANUAL:手动提交(但也是批量的); MANUAL_IMMEDIATE:立即手动提交(每手动提交一次,就马上提交)
+      ack-mode: BATCH
+      ack-count: 100 # COUNT或COUNT_TIME模式.累计条数
+      ack-time: 1000 # TIME或OUNT_TIME模式.间隔时间.
+      concurrency: 10 # 监听容器中运行的线程数
+      poll-timeout: 3000 # 每次poll()的超时时间(ack-time应该小于这个值)
+    #消费者配置
+    consumer:
+      enable-auto-commit: true #是否自动提交消费者的offset(偏移量),也就是该消费者目前在分区日志中的位置
+      auto-commit-interval: 100 #自动提交消费者偏移量的间隔,毫秒. 如果ENABLE_AUTO_COMMIT_CONFIG属性开启,它就会生效
+#      client-id: 2 #客户端id,发送请求时,会将该值传送到服务端.记录到日志中去
+      # 消费者没有初始化的偏移量,或者当前偏移量不存在,几种策略
+      # latest:最新的偏移量; earliest:最早的偏移量; exception:抛出异常; none:什么都不做.
+      auto-offset-reset: earliest
+      fetch-max-wait: 1000 # 每次获取请求,最大等待时间
+      fetch-min-size: 1 # 每次获取请求.服务端应返回的最小数据量(字节)
+      group-id: consumer-group-1 # 消费者所属的消费者组,唯一
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer # key反序列化器(此处自动提示要等待会才出来)
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer # value 反序列化器
+      max-poll-records: 99999 #单次调用 poll()方法能获取的最大记录数
+      heartbeat-interval: 20000 # 心跳检测间隔,需要小于session.timeout.ms
+    #生产者配置
+    producer:
+      acks: 1 #生产者确认模式  发送消息时,  0:不等待服务端确认收到消息; 1:等待服务端确认收到消息; -1:等待服务器确认收到消息并转发到从服务器完成;
+      batch-size: 100  # 批量发送时,每批数量
+      buffer-memory: 10240000 #生产者可以缓存的.等待被发送的记录的总字节数
+      client-id: 2 #客户端id,发送请求时,会将该值传送到服务端.记录到日志中去
+      retries: 3 #发送失败时,可重试次数,为0时不重试
+      compression-type: none  # 压缩类型， none(默认):不压缩;   可选: gzip snappy lz4
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer  # key序列化器
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer # value 反序列化器
+    #可传入Map类型参数,配置其他属性(例如这个session.timeout.ms)
+    properties:
+      # 这些属性的key,可以参照ConsumerConfig和ProducerConfig类的 字段值
+      session.timeout.ms: 30000 #客户端响应服务端的心跳检测的超时时间,超时后被提出
+
