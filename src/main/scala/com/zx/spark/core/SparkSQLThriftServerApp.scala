@@ -1,8 +1,6 @@
-package com.zx.spark
+package com.zx.spark.core
 
 import java.sql.DriverManager
-
-import org.apache.hive.jdbc.HiveDriver
 
 /**
   * author:ZhengXing

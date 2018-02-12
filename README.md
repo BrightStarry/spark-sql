@@ -1,5 +1,6 @@
 #### Spark
 * 阅读Spark SQL相关官方文档笔记,见SparkSQLDoc.md
+* Spark Streaming 相关， 见SparkStreaming.md
 
 
 #### 奇淫巧技
@@ -1212,7 +1213,7 @@
         
         提交
         spark-submit \
-                --class com.zx.spark.log.StatFormatJob \
+                --class com.zx.spark.core.log.StatFormatJob \
                 --master yarn-cluster \
                 --executor-memory 512m \
                 --num-executors 1 \

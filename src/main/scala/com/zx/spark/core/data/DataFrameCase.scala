@@ -1,4 +1,4 @@
-package com.zx.spark.data
+package com.zx.spark.core.data
 
 import org.apache.spark.sql.SparkSession
 

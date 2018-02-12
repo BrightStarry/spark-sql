@@ -1,4 +1,4 @@
-package com.zx.spark.log
+package com.zx.spark.core.log
 
 import org.apache.spark.sql.Row
 import org.apache.spark.sql.types.{LongType, StringType, StructField, StructType}

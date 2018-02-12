@@ -1,4 +1,4 @@
-package com.zx.spark.log
+package com.zx.spark.core.log
 
 /**
   * 每天视频访问统计 实体类
